@@ -1,335 +1,312 @@
-{
- "cells": [
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "\n",
-    "BASE_URL = 'http://www.winemag.com/?s=&drink_type=wine&page={0}'\n",
-    "session = requests.Session()\n",
-    "HEADERS = {\n",
-    "    'user-agent': ('Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 '\n",
-    "                   '(KHTML, like Gecko) Chrome/48.0.2564.109 Safari/537.36')\n",
-    "}\n",
-    "DATA_DIR = 'data'\n",
-    "FILENAME = 'winemag-data'\n",
-    "\n",
-    "UNKNOWN_FORMAT = 0\n",
-    "APPELLATION_FORMAT_0 = 1\n",
-    "APPELLATION_FORMAT_1 = 2\n",
-    "APPELLATION_FORMAT_2 = 3\n",
-    "\n",
-    "\n",
-    "#class Scraper():\n",
-    "    \"\"\"Scraper for Winemag.com to collect wine reviews\"\"\"\n",
-    "\n",
-    "    def __init__(self, pages_to_scrape=(1,1), num_jobs=1, clear_old_data=True):\n",
-    "        self.pages_to_scrape = pages_to_scrape\n",
-    "        self.num_jobs = num_jobs\n",
-    "        self.clear_old_data = clear_old_data\n",
-    "        self.session = requests.Session()\n",
-    "        self.start_time = time.time()\n",
-    "        self.cross_process_review_count = 0\n",
-    "        self.estimated_total_reviews = (pages_to_scrape[1] + 1 - pages_to_scrape[0]) * 30\n",
-    "\n",
-    "        if num_jobs > 1:\n",
-    "            self.multiprocessing = True\n",
-    "            self.worker_pool = Pool(num_jobs)\n",
-    "        else:\n",
-    "            self.multiprocessing = False\n",
-    "\n",
-    "    def scrape_site(self):\n",
-    "        if self.clear_old_data:\n",
-    "            self.clear_data_dir()\n",
-    "        if self.multiprocessing:\n",
-    "            link_list = [BASE_URL.format(page) for page in range(self.pages_to_scrape[0],self.pages_to_scrape[1] + 1)]\n",
-    "            records = self.worker_pool.map(self.scrape_page, link_list)\n",
-    "            self.worker_pool.terminate()\n",
-    "            self.worker_pool.join()\n",
-    "        else:\n",
-    "            for page in range(self.pages_to_scrape[0], self.pages_to_scrape[1] + 1):\n",
-    "                self.scrape_page(BASE_URL.format(page))\n",
-    "        print('Scrape finished...')\n",
-    "        self.condense_data()\n",
-    "\n",
-    "    def scrape_page(self, page_url, isolated_review_count=0, retry_count=0):\n",
-    "        scrape_data = []\n",
-    "        try:\n",
-    "            response = self.session.get(page_url, headers=HEADERS)\n",
-    "        except:\n",
-    "            retry_count += 1\n",
-    "            if retry_count <= 3:\n",
-    "                self.session = requests.Session()\n",
-    "                self.scrape_page(page_url, isolated_review_count, retry_count)\n",
-    "            else:\n",
-    "                raise\n",
-    "\n",
-    "        soup = BeautifulSoup(response.content, 'html.parser')\n",
-    "        # Drop the first review-item; it's always empty\n",
-    "        reviews = soup.find_all('li', {'class': 'review-item'})[1:]\n",
-    "        for review in reviews:\n",
-    "            self.cross_process_review_count += 1\n",
-    "            isolated_review_count += 1\n",
-    "            review_url = review.find('a', {'class': 'review-listing'})['href']\n",
-    "            try:\n",
-    "                review_data = self.scrape_review(review_url)\n",
-    "            except Exception as e:\n",
-    "                print('Encountered error', e)\n",
-    "                continue\n",
-    "            scrape_data.append(review_data)\n",
-    "            self.update_scrape_status()\n",
-    "        self.save_data(scrape_data)\n",
-    "\n",
-    "\n",
-    "    def scrape_review(self, review_url):\n",
-    "        review_response = self.session.get(review_url, headers=HEADERS)\n",
-    "        review_soup = BeautifulSoup(review_response.content, 'html.parser')\n",
-    "        try:\n",
-    "            return self.parse_review(review_soup)\n",
-    "        except ReviewFormatException as e:\n",
-    "            print('\\n-----\\nError parsing: {}\\n{}\\n-----'.format(\n",
-    "                review_url,\n",
-    "                e.message\n",
-    "            ))\n",
-    "\n",
-    "    def parse_review(self, review_soup):\n",
-    "        review_format = self.determine_review_format(review_soup)\n",
-    "        points = review_soup.find(\"span\", {\"id\": \"points\"}).contents[0]\n",
-    "        title = review_soup.find(\"div\", {\"class\", \"article-title\"}).contents[0]\n",
-    "        description = review_soup.find(\"p\", {\"class\": \"description\"}).contents[0]\n",
-    "\n",
-    "        try:\n",
-    "            taster_name = review_soup.find(\"div\", {\"class\", \"taster\"}).find(\"div\", {\"class\", \"name\"})\n",
-    "            if taster_name is not None:\n",
-    "                taster_name = taster_name.contents[0]\n",
-    "\n",
-    "            taster_twitter_handle = review_soup.find(\"div\", {\"class\", \"taster\"}).find(\"div\", {\"class\", \"twitter-handle\"})\n",
-    "            if taster_twitter_handle is not None:\n",
-    "                taster_twitter_handle = taster_twitter_handle.contents[0]\n",
-    "        except:\n",
-    "            taster_name = None\n",
-    "            taster_twitter_handle = None\n",
-    "\n",
-    "        info_containers = review_soup.find(\n",
-    "            'ul', {'class': 'primary-info'}).find_all('li', {'class': 'row'})\n",
-    "\n",
-    "        if review_format['price_index'] is not None:\n",
-    "            try:\n",
-    "                price_string = info_containers[review_format['price_index']].find(\n",
-    "                    'div', {'class': 'info'}).span.span.contents[0].split(',')[0]\n",
-    "            except:\n",
-    "                raise ReviewFormatException('Unexpected price format')\n",
-    "            # Sometimes price is N/A\n",
-    "            try:\n",
-    "                price = int(re.sub('[$]', '', price_string))\n",
-    "            except ValueError:\n",
-    "                price = None\n",
-    "        else:\n",
-    "            price = None\n",
-    "\n",
-    "        if review_format['designation_index'] is not None:\n",
-    "            try:\n",
-    "                designation = info_containers[review_format['designation_index']].find('div', {'class': 'info'}).span.span.contents[0]\n",
-    "            except:\n",
-    "                raise ReviewFormatException('Unexpected designation format')\n",
-    "        else:\n",
-    "            designation = None\n",
-    "\n",
-    "        if review_format['variety_index'] is not None:\n",
-    "            try:\n",
-    "                variety = info_containers[review_format['variety_index']].find(\n",
-    "                    'div', {'class': 'info'}).span.findChildren()[0].contents[0]\n",
-    "            except:\n",
-    "                raise ReviewFormatException('Unexpected variety format')\n",
-    "        else:\n",
-    "            variety = None\n",
-    "\n",
-    "        if review_format['appellation_index'] is not None:\n",
-    "            appellation_info = info_containers[review_format['appellation_index']].find('div', {'class': 'info'}).span.findChildren()\n",
-    "            try:\n",
-    "                if review_format['appellation_format'] == APPELLATION_FORMAT_0:\n",
-    "                    region_1 = None\n",
-    "                    region_2 = None\n",
-    "                    province = appellation_info[0].contents[0]\n",
-    "                    country = appellation_info[1].contents[0]\n",
-    "                elif review_format['appellation_format'] == APPELLATION_FORMAT_1:\n",
-    "                    region_1 = appellation_info[0].contents[0]\n",
-    "                    region_2 = None\n",
-    "                    province = appellation_info[1].contents[0]\n",
-    "                    country = appellation_info[2].contents[0]\n",
-    "                elif review_format['appellation_format'] == APPELLATION_FORMAT_2:\n",
-    "                    region_1 = appellation_info[0].contents[0]\n",
-    "                    region_2 = appellation_info[1].contents[0]\n",
-    "                    province = appellation_info[2].contents[0]\n",
-    "                    country = appellation_info[3].contents[0]\n",
-    "                else:\n",
-    "                    region_1 = None\n",
-    "                    region_2 = None\n",
-    "                    province = None\n",
-    "                    country = None\n",
-    "            except:\n",
-    "                raise ReviewFormatException('Unknown appellation format')\n",
-    "        else:\n",
-    "            region_1 = None\n",
-    "            region_2 = None\n",
-    "            province = None\n",
-    "            country = None\n",
-    "\n",
-    "        if review_format['winery_index'] is not None:\n",
-    "            try:\n",
-    "                winery = info_containers[review_format['winery_index']].find(\n",
-    "                    'div', {'class': 'info'}).span.span.findChildren()[0].contents[0]\n",
-    "            except:\n",
-    "                raise ReviewFormatException('Unexpected winery format')\n",
-    "        else:\n",
-    "            winery = None\n",
-    "\n",
-    "        review_data = {\n",
-    "            'points': points,\n",
-    "            'title': title,\n",
-    "            'description': description,\n",
-    "            'taster_name': taster_name,\n",
-    "            'taster_twitter_handle': taster_twitter_handle,\n",
-    "            'price': price,\n",
-    "            'designation': designation,\n",
-    "            'variety': variety,\n",
-    "            'region_1': region_1,\n",
-    "            'region_2': region_2,\n",
-    "            'province': province,\n",
-    "            'country': country,\n",
-    "            'winery': winery\n",
-    "        }\n",
-    "        return review_data\n",
-    "\n",
-    "    def determine_review_format(self, review_soup):\n",
-    "        review_format = {}\n",
-    "        info_containers = review_soup.find(\n",
-    "            'ul', {'class': 'primary-info'}).find_all('li', {'class': 'row'})\n",
-    "\n",
-    "        review_info = []\n",
-    "        for container in info_containers:\n",
-    "            review_info.append(str(container.find('span').contents[0]).lower())\n",
-    "\n",
-    "        try:\n",
-    "            review_format['price_index'] = review_info.index('price')\n",
-    "        except ValueError:\n",
-    "            review_format['price_index'] = None\n",
-    "        try:\n",
-    "            review_format['designation_index'] = review_info.index('designation')\n",
-    "        except ValueError:\n",
-    "            review_format['designation_index'] = None\n",
-    "        try:\n",
-    "            review_format['variety_index'] = review_info.index('variety')\n",
-    "        except ValueError:\n",
-    "            review_format['variety_index'] = None\n",
-    "        try:\n",
-    "            review_format['appellation_index'] = review_info.index('appellation')\n",
-    "        except ValueError:\n",
-    "            review_format['appellation_index'] = None\n",
-    "        try:\n",
-    "            review_format['winery_index'] = review_info.index('winery')\n",
-    "        except ValueError:\n",
-    "            review_format['winery_index'] = None\n",
-    "\n",
-    "        # The appellation format changes based on where in the world the winery is located\n",
-    "        if review_format['appellation_index'] is not None:\n",
-    "            appellation_info = info_containers[review_format['appellation_index']].find('div', {'class': 'info'}).span.findChildren()\n",
-    "            if len(appellation_info) == 2:\n",
-    "                review_format['appellation_format'] = APPELLATION_FORMAT_0\n",
-    "            elif len(appellation_info) == 3:\n",
-    "                review_format['appellation_format'] = APPELLATION_FORMAT_1\n",
-    "            elif len(appellation_info) == 4:\n",
-    "                review_format['appellation_format'] = APPELLATION_FORMAT_2\n",
-    "            else:\n",
-    "                review_format['appellation_format'] = UNKNOWN_FORMAT\n",
-    "\n",
-    "        return review_format\n",
-    "\n",
-    "    def save_data(self, data):\n",
-    "        filename = '{}/{}_{}.json'.format(DATA_DIR, FILENAME, time.time())\n",
-    "        try:\n",
-    "            os.makedirs(DATA_DIR)\n",
-    "        except OSError:\n",
-    "            pass\n",
-    "        with open(filename, 'w') as fout:\n",
-    "            json.dump(data, fout)\n",
-    "\n",
-    "    def clear_all_data(self):\n",
-    "        self.clear_data_dir()\n",
-    "        self.clear_output_data()\n",
-    "\n",
-    "    def clear_data_dir(self):\n",
-    "        try:\n",
-    "            shutil.rmtree(DATA_DIR)\n",
-    "        except FileNotFoundError:\n",
-    "            pass\n",
-    "\n",
-    "    def clear_output_data(self):\n",
-    "        try:\n",
-    "            os.remove('{}.json'.format(FILENAME))\n",
-    "        except FileNotFoundError:\n",
-    "            pass\n",
-    "\n",
-    "    def condense_data(self):\n",
-    "        print('Condensing Data...')\n",
-    "        condensed_data = []\n",
-    "        all_files = glob.glob('{}/*.json'.format(DATA_DIR))\n",
-    "        for file in all_files:\n",
-    "            with open(file, 'rb') as fin:\n",
-    "                condensed_data += json.load(fin)\n",
-    "        print(len(condensed_data))\n",
-    "        filename = '{}.json'.format(FILENAME)\n",
-    "        with open(filename, 'w') as fout:\n",
-    "            json.dump(condensed_data, fout)\n",
-    "\n",
-    "    def update_scrape_status(self):\n",
-    "        elapsed_time = round(time.time() - self.start_time, 2)\n",
-    "        time_remaining = round((self.estimated_total_reviews - self.cross_process_review_count) * (self.cross_process_review_count / elapsed_time), 2)\n",
-    "        print('{0}/{1} reviews | {2} sec elapsed | {3} sec remaining\\r'.format(\n",
-    "            self.cross_process_review_count, self.estimated_total_reviews, elapsed_time, time_remaining))\n",
-    "\n",
-    "\n",
-    "class ReviewFormatException(Exception):\n",
-    "    \"\"\"Exception when the format of a review page is not understood by the scraper\"\"\"\n",
-    "    def __init__(self, message):\n",
-    "        self.message = message\n",
-    "        super(Exception, self).__init__(message)\n",
-    "\n",
-    "\n",
-    "if __name__ == '__main__':\n",
-    "    # Total review results on their site are conflicting, hardcode as the max tested value for now\n",
-    "    pages_to_scrape = (1, 7554)\n",
-    "    winmag_scraper = Scraper(pages_to_scrape=pages_to_scrape, num_jobs=10, clear_old_data=False)\n",
-    "\n",
-    "    # Step 1: scrape data\n",
-    "    winmag_scraper.scrape_site()\n",
-    "\n",
-    "    # Step 2: condense data\n",
-    "    winmag_scraper.condense_data()"
-   ]
-  }
- ],
- "metadata": {
-  "kernelspec": {
-   "display_name": "Python 3",
-   "language": "python",
-   "name": "python3"
-  },
-  "language_info": {
-   "codemirror_mode": {
-    "name": "ipython",
-    "version": 3
-   },
-   "file_extension": ".py",
-   "mimetype": "text/x-python",
-   "name": "python",
-   "nbconvert_exporter": "python",
-   "pygments_lexer": "ipython3",
-   "version": "3.7.3"
-  }
- },
- "nbformat": 4,
- "nbformat_minor": 4
+from bs4 import BeautifulSoup
+from multiprocessing.dummy import Pool
+import os
+import shutil
+import time
+import requests
+import re
+import json
+import glob
+
+
+BASE_URL = 'http://www.winemag.com/?s=&drink_type=wine&page={0}'
+session = requests.Session()
+HEADERS = {
+    'user-agent': ('Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 '
+                   '(KHTML, like Gecko) Chrome/48.0.2564.109 Safari/537.36')
 }
+DATA_DIR = 'data'
+FILENAME = 'winemag-data'
+
+UNKNOWN_FORMAT = 0
+APPELLATION_FORMAT_0 = 1
+APPELLATION_FORMAT_1 = 2
+APPELLATION_FORMAT_2 = 3
+
+
+#class Scraper():
+    """Scraper for Winemag.com to collect wine reviews"""
+
+    def __init__(self, pages_to_scrape=(1,1), num_jobs=1, clear_old_data=True):
+        self.pages_to_scrape = pages_to_scrape
+        self.num_jobs = num_jobs
+        self.clear_old_data = clear_old_data
+        self.session = requests.Session()
+        self.start_time = time.time()
+        self.cross_process_review_count = 0
+        self.estimated_total_reviews = (pages_to_scrape[1] + 1 - pages_to_scrape[0]) * 30
+
+        if num_jobs > 1:
+            self.multiprocessing = True
+            self.worker_pool = Pool(num_jobs)
+        else:
+            self.multiprocessing = False
+
+    def scrape_site(self):
+        if self.clear_old_data:
+            self.clear_data_dir()
+        if self.multiprocessing:
+            link_list = [BASE_URL.format(page) for page in range(self.pages_to_scrape[0],self.pages_to_scrape[1] + 1)]
+            records = self.worker_pool.map(self.scrape_page, link_list)
+            self.worker_pool.terminate()
+            self.worker_pool.join()
+        else:
+            for page in range(self.pages_to_scrape[0], self.pages_to_scrape[1] + 1):
+                self.scrape_page(BASE_URL.format(page))
+        print('Scrape finished...')
+        self.condense_data()
+
+    def scrape_page(self, page_url, isolated_review_count=0, retry_count=0):
+        scrape_data = []
+        try:
+            response = self.session.get(page_url, headers=HEADERS)
+        except:
+            retry_count += 1
+            if retry_count <= 3:
+                self.session = requests.Session()
+                self.scrape_page(page_url, isolated_review_count, retry_count)
+            else:
+                raise
+
+        soup = BeautifulSoup(response.content, 'html.parser')
+        # Drop the first review-item; it's always empty
+        reviews = soup.find_all('li', {'class': 'review-item'})[1:]
+        for review in reviews:
+            self.cross_process_review_count += 1
+            isolated_review_count += 1
+            review_url = review.find('a', {'class': 'review-listing'})['href']
+            try:
+                review_data = self.scrape_review(review_url)
+            except Exception as e:
+                print('Encountered error', e)
+                continue
+            scrape_data.append(review_data)
+            self.update_scrape_status()
+        self.save_data(scrape_data)
+
+
+    def scrape_review(self, review_url):
+        review_response = self.session.get(review_url, headers=HEADERS)
+        review_soup = BeautifulSoup(review_response.content, 'html.parser')
+        try:
+            return self.parse_review(review_soup)
+        except ReviewFormatException as e:
+            print('\n-----\nError parsing: {}\n{}\n-----'.format(
+                review_url,
+                e.message
+            ))
+
+    def parse_review(self, review_soup):
+        review_format = self.determine_review_format(review_soup)
+        points = review_soup.find("span", {"id": "points"}).contents[0]
+        title = review_soup.find("div", {"class", "article-title"}).contents[0]
+        description = review_soup.find("p", {"class": "description"}).contents[0]
+
+        try:
+            taster_name = review_soup.find("div", {"class", "taster"}).find("div", {"class", "name"})
+            if taster_name is not None:
+                taster_name = taster_name.contents[0]
+
+            taster_twitter_handle = review_soup.find("div", {"class", "taster"}).find("div", {"class", "twitter-handle"})
+            if taster_twitter_handle is not None:
+                taster_twitter_handle = taster_twitter_handle.contents[0]
+        except:
+            taster_name = None
+            taster_twitter_handle = None
+
+        info_containers = review_soup.find(
+            'ul', {'class': 'primary-info'}).find_all('li', {'class': 'row'})
+
+        if review_format['price_index'] is not None:
+            try:
+                price_string = info_containers[review_format['price_index']].find(
+                    'div', {'class': 'info'}).span.span.contents[0].split(',')[0]
+            except:
+                raise ReviewFormatException('Unexpected price format')
+            # Sometimes price is N/A
+            try:
+                price = int(re.sub('[$]', '', price_string))
+            except ValueError:
+                price = None
+        else:
+            price = None
+
+        if review_format['designation_index'] is not None:
+            try:
+                designation = info_containers[review_format['designation_index']].find('div', {'class': 'info'}).span.span.contents[0]
+            except:
+                raise ReviewFormatException('Unexpected designation format')
+        else:
+            designation = None
+
+        if review_format['variety_index'] is not None:
+            try:
+                variety = info_containers[review_format['variety_index']].find(
+                    'div', {'class': 'info'}).span.findChildren()[0].contents[0]
+            except:
+                raise ReviewFormatException('Unexpected variety format')
+        else:
+            variety = None
+
+        if review_format['appellation_index'] is not None:
+            appellation_info = info_containers[review_format['appellation_index']].find('div', {'class': 'info'}).span.findChildren()
+            try:
+                if review_format['appellation_format'] == APPELLATION_FORMAT_0:
+                    region_1 = None
+                    region_2 = None
+                    province = appellation_info[0].contents[0]
+                    country = appellation_info[1].contents[0]
+                elif review_format['appellation_format'] == APPELLATION_FORMAT_1:
+                    region_1 = appellation_info[0].contents[0]
+                    region_2 = None
+                    province = appellation_info[1].contents[0]
+                    country = appellation_info[2].contents[0]
+                elif review_format['appellation_format'] == APPELLATION_FORMAT_2:
+                    region_1 = appellation_info[0].contents[0]
+                    region_2 = appellation_info[1].contents[0]
+                    province = appellation_info[2].contents[0]
+                    country = appellation_info[3].contents[0]
+                else:
+                    region_1 = None
+                    region_2 = None
+                    province = None
+                    country = None
+            except:
+                raise ReviewFormatException('Unknown appellation format')
+        else:
+            region_1 = None
+            region_2 = None
+            province = None
+            country = None
+
+        if review_format['winery_index'] is not None:
+            try:
+                winery = info_containers[review_format['winery_index']].find(
+                    'div', {'class': 'info'}).span.span.findChildren()[0].contents[0]
+            except:
+                raise ReviewFormatException('Unexpected winery format')
+        else:
+            winery = None
+
+        review_data = {
+            'points': points,
+            'title': title,
+            'description': description,
+            'taster_name': taster_name,
+            'taster_twitter_handle': taster_twitter_handle,
+            'price': price,
+            'designation': designation,
+            'variety': variety,
+            'region_1': region_1,
+            'region_2': region_2,
+            'province': province,
+            'country': country,
+            'winery': winery
+        }
+        return review_data
+
+    def determine_review_format(self, review_soup):
+        review_format = {}
+        info_containers = review_soup.find(
+            'ul', {'class': 'primary-info'}).find_all('li', {'class': 'row'})
+
+        review_info = []
+        for container in info_containers:
+            review_info.append(str(container.find('span').contents[0]).lower())
+
+        try:
+            review_format['price_index'] = review_info.index('price')
+        except ValueError:
+            review_format['price_index'] = None
+        try:
+            review_format['designation_index'] = review_info.index('designation')
+        except ValueError:
+            review_format['designation_index'] = None
+        try:
+            review_format['variety_index'] = review_info.index('variety')
+        except ValueError:
+            review_format['variety_index'] = None
+        try:
+            review_format['appellation_index'] = review_info.index('appellation')
+        except ValueError:
+            review_format['appellation_index'] = None
+        try:
+            review_format['winery_index'] = review_info.index('winery')
+        except ValueError:
+            review_format['winery_index'] = None
+
+        # The appellation format changes based on where in the world the winery is located
+        if review_format['appellation_index'] is not None:
+            appellation_info = info_containers[review_format['appellation_index']].find('div', {'class': 'info'}).span.findChildren()
+            if len(appellation_info) == 2:
+                review_format['appellation_format'] = APPELLATION_FORMAT_0
+            elif len(appellation_info) == 3:
+                review_format['appellation_format'] = APPELLATION_FORMAT_1
+            elif len(appellation_info) == 4:
+                review_format['appellation_format'] = APPELLATION_FORMAT_2
+            else:
+                review_format['appellation_format'] = UNKNOWN_FORMAT
+
+        return review_format
+
+    def save_data(self, data):
+        filename = '{}/{}_{}.json'.format(DATA_DIR, FILENAME, time.time())
+        try:
+            os.makedirs(DATA_DIR)
+        except OSError:
+            pass
+        with open(filename, 'w') as fout:
+            json.dump(data, fout)
+
+    def clear_all_data(self):
+        self.clear_data_dir()
+        self.clear_output_data()
+
+    def clear_data_dir(self):
+        try:
+            shutil.rmtree(DATA_DIR)
+        except FileNotFoundError:
+            pass
+
+    def clear_output_data(self):
+        try:
+            os.remove('{}.json'.format(FILENAME))
+        except FileNotFoundError:
+            pass
+
+    def condense_data(self):
+        print('Condensing Data...')
+        condensed_data = []
+        all_files = glob.glob('{}/*.json'.format(DATA_DIR))
+        for file in all_files:
+            with open(file, 'rb') as fin:
+                condensed_data += json.load(fin)
+        print(len(condensed_data))
+        filename = '{}.json'.format(FILENAME)
+        with open(filename, 'w') as fout:
+            json.dump(condensed_data, fout)
+
+    def update_scrape_status(self):
+        elapsed_time = round(time.time() - self.start_time, 2)
+        time_remaining = round((self.estimated_total_reviews - self.cross_process_review_count) * (self.cross_process_review_count / elapsed_time), 2)
+        print('{0}/{1} reviews | {2} sec elapsed | {3} sec remaining\r'.format(
+            self.cross_process_review_count, self.estimated_total_reviews, elapsed_time, time_remaining))
+
+
+class ReviewFormatException(Exception):
+    """Exception when the format of a review page is not understood by the scraper"""
+    def __init__(self, message):
+        self.message = message
+        super(Exception, self).__init__(message)
+
+
+if __name__ == '__main__':
+    # Total review results on their site are conflicting, hardcode as the max tested value for now
+    pages_to_scrape = (1, 7554)
+    winmag_scraper = Scraper(pages_to_scrape=pages_to_scrape, num_jobs=10, clear_old_data=False)
+
+    # Step 1: scrape data
+    winmag_scraper.scrape_site()
+
+    # Step 2: condense data
+    winmag_scraper.condense_data()
