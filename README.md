@@ -1,4 +1,4 @@
-# Keeping a high Wine Rating
+# Keeping a High Wine Rating
 
 ## Contributors 
  - [Trey Younce](https://github.com/treyounce)
