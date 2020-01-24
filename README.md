@@ -11,4 +11,4 @@
  - [Slide Deck](https://github.com/thespud56/Wine_Predictions/blob/master/Wine%20Rating.pdf)
  - [Data Sources](https://www.winemag.com/ratings/)
       -- [CSV](https://github.com/thespud56/Wine_Predictions/blob/master/Data/wine_data.csv)
-  - [Notebook]
+  - [Notebook](https://github.com/thespud56/Wine_Predictions/blob/master/Points_Analysis.ipynb)
