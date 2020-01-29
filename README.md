@@ -1,11 +1,21 @@
-# Keeping a High Wine Rating
+# Maintaining a High Wine Rating
+## Linear Regression Modeling
 
 ## Contributors 
  - [Trey Younce](https://github.com/treyounce)
  - [Stuart Murphy](https://github.com/thespud56)
  
  ## Goals 
- The purpose of this project is to analyze which factors, both as individuals and groups, are most important in maintaining a high wine rating.
+- Analyze important factors in obtaining a high wine rating 
+
+- Determine which factors are useful in maintaing that high rating 
+
+- Build a Linear Regression model to predict wine rating based on factors individually
+
+- Build a Linear Regression model to predict how a combinations of these factors will effect wine rating
+
+ ## Dataset Summary
+This dataset, from Wine Enthusiast, contains 129971 records. Each wine is given a small description from a specific taster. The dataset also includes geographic information for each wine, as well as each wine's varietal. We will use this, along with other features from the data, to conduct the analysis and build Linear Regression models. 
  
  ## Summary and Links to Files 
  - [Slide Deck](https://github.com/thespud56/Wine_Predictions/blob/master/Wine%20Rating.pdf)
