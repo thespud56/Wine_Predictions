@@ -21,4 +21,4 @@ This dataset, from Wine Enthusiast, contains 129971 records. Each wine is given 
  - [Slide Deck](https://github.com/thespud56/Wine_Predictions/blob/master/Wine%20Rating.pdf)
  - [Data Sources](https://www.winemag.com/ratings/)
       * [CSV](https://github.com/thespud56/Wine_Predictions/blob/master/Data/wine_data.csv)
-  - [Notebook]https://github.com/thespud56/Wine_Predictions/blob/master/Predicting_Wine_Rating.ipynb 
+ - [Notebook](https://github.com/thespud56/Wine_Predictions/blob/master/Predicting_Wine_Rating.ipynb)
