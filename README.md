@@ -16,6 +16,8 @@
 
  ## Dataset Summary
 This dataset, from Wine Enthusiast, contains 129971 records. Each wine is given a small description from a specific taster. The dataset also includes geographic information for each wine, as well as each wine's varietal. We will use this, along with other features from the data, to conduct the analysis and build Linear Regression models. 
+
+![](/images/Screen%20Shot%202020-09-05%20at%209.54.22%20AM.png)
  
  ## Summary and Links to Files 
  - [Slide Deck](https://github.com/thespud56/Wine_Predictions/blob/master/Wine%20Rating.pdf)
